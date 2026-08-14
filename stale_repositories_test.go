@@ -5,10 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"text/template"
@@ -32,8 +39,7 @@ var githubGETREPO = "https://api.github.com/repos%s"
 var githubGETCOMMITS = "https://api.github.com/repos%s/commits"
 var githubPOSTISSUES = "https://api.github.com/repos/avelino/awesome-go/issues"
 
-// FIXME: use https
-var awesomeGoGETISSUES = "http://api.github.com/repos/avelino/awesome-go/issues" //only returns open issues
+var awesomeGoGETISSUES = "https://api.github.com/repos/avelino/awesome-go/issues" //only returns open issues
 // FIXME: variable has type Duration, but contains a number. we should use
 //
 //	time.Hour * ... or change type of variable
@@ -313,4 +319,55 @@ func TestStaleRepository(t *testing.T) {
 		})
 
 	createIssue(t, staleRepos, client)
+}
+
+func TestGitHubAPIURLsUseHTTPS(t *testing.T) {
+	fset := token.NewFileSet()
+
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "out", "vendor":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" {
+			return nil
+		}
+
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+
+			value, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				return true
+			}
+
+			parsedURL, err := url.Parse(value)
+			if err != nil || parsedURL.Host != "api.github.com" {
+				return true
+			}
+
+			if parsedURL.Scheme != "https" {
+				t.Errorf("%s uses an insecure GitHub API URL: %q", fset.Position(lit.Pos()), value)
+			}
+
+			return true
+		})
+
+		return nil
+	})
+	requireNoErr(t, err, "scan Go files for GitHub API URLs")
 }
