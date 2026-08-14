@@ -55,3 +55,46 @@ and some list:</p>
 		t.Errorf("ToHTML() got = %v, want %v", string(got), string(expected))
 	}
 }
+
+func TestToHTMLSanitizesUnsafeHTML(t *testing.T) {
+	input := []byte(
+		`## unsafe
+<script>alert("xss")</script>
+<iframe src="https://example.local/embed"></iframe>
+<a href="javascript:alert(1)" onclick="alert(1)" target="_blank">bad link</a>
+<img src="https://example.local/logo.png" alt="logo" onerror="alert(1)">
+<table cellpadding="5"><tbody><tr><td colspan="2">allowed table</td></tr></tbody></table>
+`,
+	)
+
+	got, err := ToHTML(input)
+	if err != nil {
+		t.Fatalf("ToHTML() error = %v", err)
+	}
+
+	output := string(got)
+	for _, unsafe := range []string{
+		"<script",
+		"alert(\"xss\")",
+		"<iframe",
+		"javascript:",
+		"onclick",
+		"onerror",
+	} {
+		if strings.Contains(output, unsafe) {
+			t.Fatalf("ToHTML() output contains unsafe content %q: %s", unsafe, output)
+		}
+	}
+
+	for _, allowed := range []string{
+		`target="_blank"`,
+		`rel="noopener noreferrer"`,
+		`>bad link</a>`,
+		`<img src="https://example.local/logo.png" alt="logo"`,
+		`<table cellpadding="5"><tbody><tr><td colspan="2">allowed table</td></tr></tbody></table>`,
+	} {
+		if !strings.Contains(output, allowed) {
+			t.Fatalf("ToHTML() output missing allowed content %q: %s", allowed, output)
+		}
+	}
+}
